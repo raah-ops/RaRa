@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+rara_out/
+*.egg-info/
+.venv/
+venv/

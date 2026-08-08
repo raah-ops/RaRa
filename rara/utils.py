@@ -33,5 +33,27 @@ def probe_duration(path: str | Path) -> float:
     return float(data["format"]["duration"])
 
 
+def probe_fps(path: str | Path, default: float = 30.0) -> float:
+    """ffprobe로 비디오 스트림의 fps를 조회 (예: "30000/1001" -> 29.97)."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate",
+        "-of", "json", str(path),
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    data = json.loads(out.stdout)
+    streams = data.get("streams") or []
+    if not streams:
+        return default
+    raw = streams[0].get("r_frame_rate", "")
+    try:
+        num, den = raw.split("/")
+        den_f = float(den)
+        return float(num) / den_f if den_f else default
+    except (ValueError, ZeroDivisionError):
+        return default
+
+
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)

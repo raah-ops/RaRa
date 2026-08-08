@@ -1,7 +1,8 @@
 # RaRa
 
 **무음 구간**과 **버벅거리는(간투어·반복) 구간**을 자동으로 찾아 컷 편집하고,
-편집된 타임라인에 맞는 **자막**까지 자동 생성하는 CLI 도구입니다.
+편집된 타임라인에 맞는 **자막**까지 자동 생성하는 도구입니다. CLI와 브라우저
+화면(Streamlit) 둘 다 지원합니다.
 
 [pycapcut](https://github.com/GuanYixuan/pyCapCut)을 이용해 **CapCut 드래프트
 (프로젝트)를 직접 생성**합니다 — CapCut에서 폴더 하나만 복사해 넣으면 재인코딩
@@ -25,7 +26,7 @@ sudo apt install ffmpeg      # Ubuntu/Debian
 choco install ffmpeg         # Windows
 
 # 2) 파이썬 의존성 설치
-pip install -r requirements.txt   # faster-whisper, pycapcut
+pip install -r requirements.txt   # faster-whisper, pycapcut, streamlit
 ```
 
 faster-whisper는 최초 실행 시 음성인식 모델을 자동으로 다운로드합니다(인터넷 필요).
@@ -35,7 +36,29 @@ faster-whisper는 최초 실행 시 음성인식 모델을 자동으로 다운�
 > 영상도 그대로 있는 **바로 그 컴퓨터에서 로컬로 실행**해야 합니다. (다른 곳에서
 > 실행한 뒤 결과 폴더만 옮기면 CapCut이 원본 영상을 찾지 못합니다.)
 
-## 사용법
+## 웹 화면 (Streamlit)
+
+명령줄이 부담스럽다면 브라우저에서 업로드/다운로드로 바로 쓸 수 있습니다.
+
+```bash
+streamlit run app.py
+```
+
+실행하면 `http://localhost:8501`이 자동으로 열립니다. 영상을 업로드하고
+옵션(무음 임계값, 버벅임 탐지 여부, Whisper 모델 크기, 자막 폰트 크기 등)을
+조절한 뒤 **처리 시작**을 누르면:
+
+- 편집된 영상을 브라우저에서 바로 미리보기 + `edited.mp4` 다운로드
+- `subtitle.srt` 다운로드 + 미리보기
+- **CapCut 드래프트를 zip으로 다운로드** — 압축을 풀어 CapCut 드래프트 폴더에
+  넣으면 CapCut에서 바로 열립니다.
+
+CapCut 드래프트는 원본 영상을 절대 경로로 참조하므로, 이 zip이 제대로
+동작하려면 **`streamlit run app.py`를 CapCut이 설치된 그 컴퓨터에서 로컬로
+실행**해야 합니다. 다른 서버에 배포해 원격으로 접속하는 경우엔 화면에서
+"CapCut 드래프트 만들기"를 끄고 mp4+srt만 받아 수동으로 임포트하세요.
+
+## CLI 사용법
 
 ```bash
 python -m rara.cli input.mp4 -o out/

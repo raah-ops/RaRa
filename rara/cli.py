@@ -14,17 +14,17 @@ CapCut에는 공식 외부 API가 없어서 앱을 직접 원격조종할 수는
 위치)에 복사하면 CapCut에서 바로 프로젝트로 열린다. 단, CapCut 드래프트는 원본
 영상 파일을 "절대 경로"로 참조하므로, 이 명령은 CapCut이 설치되어 있고 원본
 영상도 그대로 있는 그 컴퓨터에서 실행해야 한다.
+
+브라우저 화면으로 쓰고 싶다면 `streamlit run app.py`를 대신 사용하세요.
 """
 from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
 from pathlib import Path
 
-from . import audio, capcut_draft, editor, silence, stutter, subtitles
-from .cutlist import TimeRemapper, build_cutlist
-from .utils import ensure_ffmpeg, probe_duration, probe_fps
+from .pipeline import PipelineOptions, run_pipeline
+from .utils import ensure_ffmpeg
 
 
 def _parse_color(raw: str) -> tuple[float, float, float]:
@@ -95,97 +95,49 @@ def main(argv: list[str] | None = None) -> int:
         print(f"입력 파일을 찾을 수 없습니다: {input_path}", file=sys.stderr)
         return 1
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
+    opts = PipelineOptions(
+        outdir=args.outdir,
+        silence_db=args.silence_db,
+        silence_min=args.silence_min,
+        lang=args.lang,
+        model=args.model,
+        device=args.device,
+        compute_type=args.compute_type,
+        repeat_gap=args.repeat_gap,
+        filler_words_path=args.filler_words,
+        skip_stutter=args.skip_stutter,
+        pad=args.pad,
+        merge_gap=args.merge_gap,
+        min_cut=args.min_cut,
+        min_keep=args.min_keep,
+        make_video=not args.skip_video_export,
+        make_capcut_draft=not args.no_capcut_draft,
+        capcut_draft_root=args.capcut_draft_root,
+        capcut_draft_name=args.capcut_draft_name,
+        capcut_overwrite=args.capcut_overwrite,
+        capcut_fps=args.capcut_fps,
+        capcut_font_size=args.capcut_font_size,
+        capcut_font_color=args.capcut_font_color,
+    )
 
-    make_capcut_draft = not args.no_capcut_draft
-    make_video = not args.skip_video_export
+    result = run_pipeline(input_path, opts, on_progress=print, dry_run=args.dry_run)
 
-    duration = probe_duration(input_path)
-    print(f"길이 확인: {duration:.2f}s")
+    if args.dry_run:
+        print("\n--dry-run: 실제 결과물은 만들지 않았습니다. 컷 구간:")
+        for s, e in result.cut_intervals:
+            print(f"  cut {s:.2f} -> {e:.2f}")
+        return 0
 
-    with tempfile.TemporaryDirectory() as tmp:
-        wav_path = audio.extract_audio(input_path, Path(tmp) / "audio.wav")
-
-        print(f"무음 탐지 중... (임계값 {args.silence_db}dB, 최소 {args.silence_min}s)")
-        silence_intervals = silence.detect_silence(
-            wav_path, noise_db=args.silence_db, min_silence_duration=args.silence_min
-        )
-        print(f"  무음 구간 {len(silence_intervals)}개 발견")
-
-        segments = []
-        stutter_intervals: list[tuple[float, float]] = []
-        if not args.skip_stutter:
-            print(f"음성 인식 중... (model={args.model}, lang={args.lang}) — 최초 실행 시 모델 다운로드로 시간이 걸릴 수 있습니다")
-            segments = stutter.transcribe(
-                str(wav_path), language=args.lang, model_size=args.model,
-                device=args.device, compute_type=args.compute_type,
-            )
-            filler_words = None
-            if args.filler_words:
-                filler_words = stutter.load_filler_words(args.filler_words)
-            stutter_intervals = stutter.detect_disfluencies(
-                segments, filler_words=filler_words, repeat_gap=args.repeat_gap
-            )
-            print(f"  버벅임(간투어/반복) 구간 {len(stutter_intervals)}개 발견")
-        else:
-            print("--skip-stutter 지정됨: 버벅임 탐지 생략")
-
-        print("컷 구간 계산 중...")
-        cut_intervals, keep_intervals = build_cutlist(
-            duration, silence_intervals, stutter_intervals,
-            pad=args.pad, merge_gap=args.merge_gap,
-            min_cut_duration=args.min_cut, min_keep_duration=args.min_keep,
-        )
-        removed = sum(e - s for s, e in cut_intervals)
-        print(f"  총 컷 구간 {len(cut_intervals)}개 / 제거 시간 {removed:.2f}s / 최종 길이 {duration - removed:.2f}s")
-
-        if args.dry_run:
-            print("\n--dry-run: 실제 결과물은 만들지 않았습니다. 컷 구간:")
-            for s, e in cut_intervals:
-                print(f"  cut {s:.2f} -> {e:.2f}")
-            return 0
-
-        remap = TimeRemapper(cut_intervals)
-        subtitle_entries = (
-            subtitles.build_srt_entries(segments, cut_intervals, remap) if segments else []
-        )
-
-        video_out = None
-        if make_video:
-            print("영상 재인코딩 중... (edited.mp4)")
-            video_out = outdir / "edited.mp4"
-            editor.cut_video(input_path, keep_intervals, video_out)
-
-        srt_out = None
-        if subtitle_entries:
-            srt_out = outdir / "subtitle.srt"
-            subtitles.write_srt(subtitle_entries, srt_out)
-
-        draft_path = None
-        if make_capcut_draft:
-            draft_root = Path(args.capcut_draft_root) if args.capcut_draft_root else outdir / "capcut_draft"
-            draft_name = args.capcut_draft_name or f"rara_{input_path.stem}"
-            fps = args.capcut_fps if args.capcut_fps else probe_fps(input_path)
-            print(f"CapCut 드래프트 생성 중... (root={draft_root}, name={draft_name}, fps={fps:.2f})")
-            draft_path = capcut_draft.build_capcut_draft(
-                input_path, keep_intervals, subtitle_entries,
-                draft_root, draft_name, fps=fps,
-                allow_replace=args.capcut_overwrite,
-                font_size=args.capcut_font_size,
-                font_color=args.capcut_font_color,
-            )
-
-    print("\n완료!")
-    if video_out:
-        print(f"  영상: {video_out}")
-    if srt_out:
-        print(f"  자막: {srt_out}")
-    if draft_path:
-        print(f"  CapCut 드래프트: {draft_path.parent}")
+    print()
+    if result.video_path:
+        print(f"  영상: {result.video_path}")
+    if result.srt_path:
+        print(f"  자막: {result.srt_path}")
+    if result.capcut_draft_path:
+        print(f"  CapCut 드래프트: {result.capcut_draft_path.parent}")
         print("    -> 이 폴더를 통째로 CapCut의 드래프트 폴더(설정 > Draft 위치)에 복사하면")
         print("       CapCut 앱에서 바로 프로젝트로 열립니다.")
-    if video_out and srt_out and not draft_path:
+    if result.video_path and result.srt_path and not result.capcut_draft_path:
         print("\nCapCut에서 사용하는 법: 새 프로젝트 생성 → 위 mp4 임포트 →")
         print("자막 트랙에 위 srt 파일을 임포트(또는 '텍스트 > 자막 가져오기')하면 됩니다.")
     return 0

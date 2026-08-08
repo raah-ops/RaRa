@@ -4,3 +4,4 @@ rara_out/
 *.egg-info/
 .venv/
 venv/
+.streamlit/
